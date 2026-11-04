@@ -1,0 +1,362 @@
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>HLW Vokabeltrainer</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#f0f4fa;color:#19324e;font:16px -apple-system,BlinkMacSystemFont,sans-serif}
+header{background:#174a82;color:white;padding:22px;text-align:center}
+main{max-width:800px;margin:auto;padding:16px}
+section{background:white;border-radius:16px;padding:20px;margin:14px 0;box-shadow:0 2px 9px #0001}
+h1{margin:0;font-size:25px}
+h2{font-size:21px}
+input,select,textarea,button{font:inherit;width:100%;padding:13px;margin:7px 0;border-radius:9px}
+input,select,textarea{border:1px solid #b7c8da;background:white}
+button{background:#1765b0;color:white;border:0;font-weight:600}
+button.alt{background:#e8f0fa;color:#174a82}
+button:disabled{opacity:.5}
+.small{color:#61758a;font-size:14px}
+.good{color:#16804a}.bad{color:#bc3333}
+.hidden{display:none}
+.card{background:#f3f7fc;padding:18px;border-radius:12px;margin:10px 0}
+.big{font-size:26px;font-weight:bold;text-align:center;padding:20px}
+.row{display:flex;gap:10px}
+.row>*{flex:1;min-width:0}
+progress{width:100%;height:15px}
+</style>
+</head>
+<body>
+<header>
+<h1>📚 HLW Vokabeltrainer</h1>
+<div>Best Shots 1 & 2</div>
+</header>
+<main>
+<section id="home">
+<h2>Meine Bücher</h2>
+<select id="book"></select>
+<button onclick="addBook()">+ Buch hinzufügen</button>
+<h2>Lektion auswählen</h2>
+<select id="lesson"></select>
+<button onclick="addLesson()">+ Lektion hinzufügen</button>
+<div class="card" id="count"></div>
+<h2>Bewertungsmodus</h2>
+<select id="mode">
+<option value="strict">Streng – exakte Schreibweise</option>
+<option value="tolerant">Tolerant – ein Tippfehler erlaubt</option>
+</select>
+<button onclick="start()">▶ Übung starten</button>
+<button class="alt" onclick="show('manage');renderWords()">Vokabeln verwalten / importieren</button>
+<button class="alt" onclick="show('history');renderHistory()">Frühere Ergebnisse</button>
+</section>
+
+<section id="manage" class="hidden">
+<h2>Vokabeln hinzufügen</h2>
+<p id="target"></p>
+<input id="de" placeholder="Deutsch">
+<input id="en" placeholder="Englisch">
+<button onclick="addWord()">Vokabel speichern</button>
+<h3>Mehrere Vokabeln importieren</h3>
+<p class="small">Eine Zeile pro Wortpaar: Deutsch ; Englisch</p>
+<textarea id="bulk" rows="6" placeholder="die Umwelt;environment&#10;die Entscheidung;decision"></textarea>
+<button onclick="importWords()">Wortliste übernehmen</button>
+<h3>PDF- oder Fotoimport</h3>
+<input type="file" id="file" accept=".txt,.csv,.pdf,image/*">
+<button onclick="readFile()">Datei einlesen</button>
+<p class="small">TXT und CSV werden direkt verarbeitet. Für PDF und Fotos ist in dieser ersten Version noch keine automatische Texterkennung eingebaut. Diese Funktion ergänzen wir im nächsten Ausbauschritt.</p>
+<h3>Vorhandene Vokabeln</h3>
+<div id="words"></div>
+<button class="alt" onclick="show('home')">Zurück</button>
+</section>
+
+<section id="quiz" class="hidden">
+<h2>Vokabelübung</h2>
+<p id="progressText"></p>
+<progress id="progress" max="20"></progress>
+<div class="card">
+<p>Übersetze ins Englische:</p>
+<div class="big" id="question"></div>
+<input id="answer" placeholder="Englisches Wort eingeben" autocomplete="off" autocapitalize="off" spellcheck="false">
+<p id="feedback"></p>
+<button id="check" onclick="checkAnswer()">Antwort überprüfen</button>
+</div>
+<button class="alt" onclick="if(confirm('Übung abbrechen?'))show('home')">Übung abbrechen</button>
+</section>
+
+<section id="results" class="hidden">
+<h2>Übungsergebnis</h2>
+<div class="big" id="score"></div>
+<div id="details"></div>
+<button onclick="printReport()">Als PDF drucken / sichern</button>
+<button onclick="emailReport()">Ergebnis per E-Mail senden</button>
+<button class="alt" onclick="show('home')">Neue Übung</button>
+</section>
+
+<section id="history" class="hidden">
+<h2>Frühere Ergebnisse</h2>
+<div id="historyList"></div>
+<button class="alt" onclick="show('home')">Zurück</button>
+</section>
+
+<section>
+<h3>Einstellungen</h3>
+<input id="student" placeholder="Name der Schülerin / des Schülers">
+<input id="email" type="email" placeholder="E-Mail-Empfänger">
+<button class="alt" onclick="saveSettings()">Einstellungen speichern</button>
+<button class="alt" onclick="backup()">Datensicherung exportieren</button>
+<input type="file" accept=".json" onchange="restore(event)">
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const key="hlw-vocab-v1";
+let db;
+try{db=JSON.parse(localStorage.getItem(key))}catch(e){}
+if(!db||!Array.isArray(db.books))db={
+ books:[
+ {name:"Best Shots 1",lessons:[]},
+ {name:"Best Shots 2",lessons:[]}
+ ],
+ history:[],student:"",email:""
+};
+let questions=[],position=0,answers=[],locked=false;
+function save(){localStorage.setItem(key,JSON.stringify(db))}
+function show(id){
+ document.querySelectorAll("main>section").forEach(s=>{
+ if(s.id)s.classList.toggle("hidden",s.id!==id)
+ });
+}
+function b(){return db.books[Number($("book").value)]}
+function l(){return b()?.lessons[Number($("lesson").value)]}
+function refresh(){
+ let bi=Number($("book").value)||0;
+ $("book").innerHTML="";
+ db.books.forEach((x,i)=>$("book").add(new Option(x.name,i)));
+ $("book").value=Math.min(bi,db.books.length-1);
+ refreshLessons();
+}
+function refreshLessons(){
+ let old=Number($("lesson").value)||0;
+ $("lesson").innerHTML="";
+ (b()?.lessons||[]).forEach((x,i)=>
+ $("lesson").add(new Option(x.name,i)));
+ if(b()?.lessons.length)
+ $("lesson").value=Math.min(old,b().lessons.length-1);
+ updateCount();
+}
+function updateCount(){
+ $("count").textContent=l()?
+ l().words.length+" Vokabeln in dieser Lektion":
+ "Noch keine Lektion vorhanden";
+}
+$("book").onchange=refreshLessons;
+$("lesson").onchange=updateCount;
+function addBook(){
+ let name=prompt("Name des neuen Buches:");
+ if(!name?.trim())return;
+ db.books.push({name:name.trim(),lessons:[]});
+ save();refresh();
+ $("book").value=db.books.length-1;
+ refreshLessons();
+}
+function addLesson(){
+ let name=prompt("Name der Lektion, z. B. Unit 1:");
+ if(!name?.trim())return;
+ b().lessons.push({name:name.trim(),words:[]});
+ save();refreshLessons();
+ $("lesson").value=b().lessons.length-1;
+ updateCount();
+}
+function insertWord(de,en){
+ de=de.trim();en=en.trim();
+ if(!de||!en)return false;
+ if(l().words.some(w=>
+ w.de.toLowerCase()===de.toLowerCase()&&
+ w.en.toLowerCase()===en.toLowerCase()))return false;
+ l().words.push({de,en});
+ return true;
+}
+function addWord(){
+ if(!l())return alert("Bitte zuerst eine Lektion anlegen.");
+ if(insertWord($("de").value,$("en").value)){
+ save();$("de").value="";$("en").value="";
+ renderWords();
+ }else alert("Eingabe unvollständig oder bereits vorhanden.");
+}
+function importWords(){
+ if(!l())return alert("Bitte Lektion auswählen.");
+ let n=0;
+ $("bulk").value.split(/\n/).forEach(line=>{
+ let parts=line.split(/[;\t]/);
+ if(parts.length>=2&&insertWord(parts[0],parts.slice(1).join(";")))n++;
+ });
+ save();renderWords();
+ alert(n+" neue Vokabeln hinzugefügt.");
+ $("bulk").value="";
+}
+async function readFile(){
+ let f=$("file").files[0];
+ if(!f)return;
+ if(!/\.(txt|csv)$/i.test(f.name)){
+ alert("PDF- und Foto-Texterkennung folgt in der nächsten Version. Bitte vorerst Wortpaare als Text einfügen.");
+ return;
+ }
+ $("bulk").value=await f.text();
+}
+function renderWords(){
+ $("target").textContent=b().name+" – "+(l()?.name||"Keine Lektion");
+ $("words").innerHTML="";
+ (l()?.words||[]).forEach((w,i)=>{
+ let d=document.createElement("div");
+ d.className="card";
+ let t=document.createElement("span");
+ t.textContent=w.de+" → "+w.en+" ";
+ let btn=document.createElement("button");
+ btn.className="alt";btn.textContent="Löschen";
+ btn.onclick=()=>{
+ if(confirm("Vokabel löschen?")){
+ l().words.splice(i,1);save();renderWords();
+ }
+ };
+ d.append(t,btn);$("words").append(d);
+ });
+ updateCount();
+}
+function normalize(s){
+ return s.trim().toLocaleLowerCase().replace(/\s+/g," ");
+}
+function distance(a,b){
+ let prev=Array.from({length:b.length+1},(_,i)=>i);
+ for(let i=1;i<=a.length;i++){
+ let next=[i];
+ for(let j=1;j<=b.length;j++)
+ next[j]=Math.min(next[j-1]+1,prev[j]+1,
+ prev[j-1]+(a[i-1]===b[j-1]?0:1));
+ prev=next;
+ }
+ return prev[b.length];
+}
+function start(){
+ if(!l()||l().words.length<20)
+ return alert("Für eine Übung werden mindestens 20 Vokabeln in der Lektion benötigt.");
+ questions=[...l().words].sort(()=>Math.random()-.5).slice(0,20);
+ position=0;answers=[];show("quiz");next();
+}
+function next(){
+ locked=false;
+ $("answer").value="";$("feedback").textContent="";
+ $("check").textContent="Antwort überprüfen";
+ $("question").textContent=questions[position].de;
+ $("progressText").textContent="Frage "+(position+1)+" von 20";
+ $("progress").value=position;
+ $("answer").focus();
+}
+function checkAnswer(){
+ if(locked){
+ position++;
+ if(position===questions.length)finish();
+ else next();
+ return;
+ }
+ let word=questions[position],input=$("answer").value;
+ if(!input.trim())return;
+ let a=normalize(input),e=normalize(word.en);
+ let exact=a===e;
+ let accepted=exact||($("mode").value==="tolerant"&&
+ distance(a,e)<=1);
+ answers.push({...word,input,correct:accepted,exact});
+ $("feedback").textContent=accepted?
+ (exact?"✓ Richtig":"✓ Akzeptiert – richtig: "+word.en):
+ "✗ Falsch – richtig: "+word.en;
+ $("feedback").className=accepted?"good":"bad";
+ locked=true;
+ $("check").textContent=position===19?
+ "Ergebnis anzeigen":"Nächste Vokabel";
+}
+function finish(){
+ let record={
+ date:new Date().toLocaleString("de-AT"),
+ book:b().name,lesson:l().name,
+ mode:$("mode").value,
+ student:db.student,
+ answers:[...answers]
+ };
+ db.history.unshift(record);save();
+ displayResult(record);
+}
+function displayResult(r){
+ show("results");
+ let n=r.answers.filter(x=>x.correct).length;
+ $("score").textContent=n+" / "+r.answers.length+
+ " richtig ("+Math.round(n/r.answers.length*100)+" %)";
+ $("details").innerHTML="";
+ let info=document.createElement("p");
+ info.textContent=[r.student,r.date,r.book,r.lesson,
+ r.mode==="strict"?"Streng":"Tolerant"].filter(Boolean).join(" | ");
+ $("details").append(info);
+ r.answers.forEach((w,i)=>{
+ let d=document.createElement("div");d.className="card";
+ d.textContent=(i+1)+". "+w.de+" → "+w.input+
+ " | Lösung: "+w.en+
+ (w.correct?(w.exact?" ✓":" ✓ toleriert"):" ✗");
+ $("details").append(d);
+ });
+ window.lastRecord=r;
+}
+function printReport(){window.print()}
+function emailReport(){
+ let r=window.lastRecord;
+ let n=r.answers.filter(x=>x.correct).length;
+ let text=r.answers.map((w,i)=>
+ (i+1)+". "+w.de+" | "+w.input+
+ " | "+w.en+" | "+(w.correct?"Richtig":"Falsch")).join("\n");
+ let subject="HLW Vokabeltest – "+r.book+" "+r.lesson;
+ let body=r.date+"\n"+r.student+"\n"+n+
+ "/20 richtig\n\n"+text;
+ location.href="mailto:"+encodeURIComponent(db.email)+
+ "?subject="+encodeURIComponent(subject)+
+ "&body="+encodeURIComponent(body);
+}
+function renderHistory(){
+ $("historyList").innerHTML="";
+ db.history.forEach((r,i)=>{
+ let btn=document.createElement("button");
+ btn.className="alt";
+ btn.textContent=r.date+" – "+r.book+" "+r.lesson+
+ " – "+r.answers.filter(x=>x.correct).length+"/20";
+ btn.onclick=()=>displayResult(r);
+ $("historyList").append(btn);
+ });
+}
+function saveSettings(){
+ db.student=$("student").value;
+ db.email=$("email").value;save();
+ alert("Gespeichert.");
+}
+function backup(){
+ let blob=new Blob([JSON.stringify(db,null,2)],
+ {type:"application/json"});
+ let a=document.createElement("a");
+ a.href=URL.createObjectURL(blob);
+ a.download="vokabeltrainer-backup.json";a.click();
+ setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+async function restore(ev){
+ let f=ev.target.files[0];if(!f)return;
+ try{
+ let data=JSON.parse(await f.text());
+ if(!Array.isArray(data.books))throw Error();
+ if(confirm("Aktuelle Daten durch Sicherung ersetzen?")){
+ db=data;save();location.reload();
+ }
+ }catch(e){alert("Ungültige Sicherungsdatei.");}
+}
+$("student").value=db.student||"";
+$("email").value=db.email||"";
+refresh();
+</script>
+</body>
+</html>
